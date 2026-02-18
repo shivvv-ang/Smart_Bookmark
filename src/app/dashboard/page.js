@@ -3,163 +3,130 @@
 import { useEffect, useState } from "react";
 import { supabase } from "@/libs/supabase";
 import { useRouter } from "next/navigation";
+import { useBookmarks } from "@/hooks/useBookmarks";
 
 export default function Dashboard() {
     const router = useRouter();
-
+    const [user, setUser] = useState(null);
     const [title, setTitle] = useState("");
     const [url, setUrl] = useState("");
-    const [bookmarks, setBookmarks] = useState([]);
-    const [user, setUser] = useState(null);
+    const { bookmarks, addBookmark, deleteBookmark } = useBookmarks(user);
 
-   
     useEffect(() => {
         const checkUser = async () => {
             const {
                 data: { user },
             } = await supabase.auth.getUser();
-
-            if (!user) {
-                router.push("/login");
-            } else {
-                setUser(user);
-            }
+            if (!user) router.push("/login");
+            else setUser(user);
         };
-
         checkUser();
     }, [router]);
 
-   
-    const fetchBookmarks = async () => {
-        const { data } = await supabase
-            .from("bookmarks")
-            .select("*")
-            .order("created_at", { ascending: false });
-
-        setBookmarks(data || []);
-    };
-
     useEffect(() => {
-        fetchBookmarks();
-    }, []);
-
-   
-    const addBookmark = async () => {
-        if (!title || !url || !user) return;
-
-        await supabase.from("bookmarks").insert({
-            title,
-            url,
-            user_id: user.id,
+        const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+            if (event === "SIGNED_OUT") {
+                router.push("/login");
+            }
+            if (event === "SIGNED_IN") {
+                setUser(session.user);
+            }
         });
 
+        return () => subscription.unsubscribe();
+    }, [router]);
+
+    const handleAdd = async () => {
+        if (!title || !url || !user) return;
+        await addBookmark(title, url);
         setTitle("");
         setUrl("");
     };
 
-   
-    const deleteBookmark = async (id) => {
-        await supabase.from("bookmarks").delete().eq("id", id);
+    const handleLogout = async () => {
+        await supabase.auth.signOut();
+        router.push("/login");
     };
 
-   
-    useEffect(() => {
-        if (!user) return;
-
-        const channel = supabase
-            .channel("bookmarks-realtime")
-            .on(
-                "postgres_changes",
-                {
-                    event: "*",
-                    schema: "public",
-                    table: "bookmarks",
-                    filter: `user_id=eq.${user.id}`,
-                },
-                (payload) => {
-                    const { eventType, new: newRow, old: oldRow } = payload;
-
-                    if (eventType === "INSERT") {
-                        setBookmarks((prev) => [newRow, ...prev]);
-                    }
-
-                    if (eventType === "DELETE") {
-                        setBookmarks((prev) =>
-                            prev.filter((b) => b.id !== oldRow.id)
-                        );
-                    }
-
-                    if (eventType === "UPDATE") {
-                        setBookmarks((prev) =>
-                            prev.map((b) =>
-                                b.id === newRow.id ? newRow : b
-                            )
-                        );
-                    }
-                }
-            )
-            .subscribe();
-
-        return () => {
-            supabase.removeChannel(channel);
-        };
-    }, [user]);
-
-   
     return (
-        <div className="p-10 max-w-xl mx-auto space-y-6">
-            <h1 className="text-2xl font-bold">Bookmarks</h1>
-
-           
-            <div className="space-y-2">
-                <input
-                    placeholder="Title"
-                    value={title}
-                    onChange={(e) => setTitle(e.target.value)}
-                    className="border p-2 w-full rounded"
-                />
-
-                <input
-                    placeholder="URL"
-                    value={url}
-                    onChange={(e) => setUrl(e.target.value)}
-                    className="border p-2 w-full rounded"
-                />
-
-                <button
-                    onClick={addBookmark}
-                    className="bg-black text-white px-4 py-2 rounded"
-                >
-                    Add Bookmark
-                </button>
+        <div className="min-h-screen bg-gray-50">
+            <div className="border-b bg-white px-6 py-4 flex justify-between items-center">
+                <span className="font-semibold text-gray-800 tracking-tight">
+                    📎 Bookmarks
+                </span>
+                <div className="flex items-center gap-3">
+                    <span className="text-sm text-gray-400">{user?.email}</span>
+                    <button
+                        onClick={handleLogout}
+                        className="text-sm text-gray-500 hover:text-red-500 transition-colors"
+                    >
+                        Logout
+                    </button>
+                </div>
             </div>
 
-        
-            <div className="space-y-3">
-                {bookmarks.map((b) => (
-                    <div
-                        key={b.id}
-                        className="border p-3 rounded flex justify-between items-center"
+            <div className="max-w-lg mx-auto px-4 py-10 space-y-8">
+                <div className="bg-white rounded-2xl border p-6 space-y-3 shadow-sm">
+                    <h2 className="text-sm font-medium text-gray-500 uppercase tracking-wide">
+                        New Bookmark
+                    </h2>
+                    <input
+                        placeholder="Title"
+                        value={title}
+                        onChange={(e) => setTitle(e.target.value)}
+                        className="w-full border rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-black transition"
+                    />
+                    <input
+                        placeholder="https://"
+                        value={url}
+                        onChange={(e) => setUrl(e.target.value)}
+                        className="w-full border rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-black transition"
+                    />
+                    <button
+                        onClick={handleAdd}
+                        className="w-full bg-black text-white text-sm py-2 rounded-lg hover:bg-gray-800 transition"
                     >
-                        <div>
-                            <p className="font-semibold">{b.title}</p>
-                            <a
-                                href={b.url}
-                                target="_blank"
-                                className="text-blue-600 text-sm"
-                            >
-                                {b.url}
-                            </a>
-                        </div>
+                        Add
+                    </button>
+                </div>
 
-                        <button
-                            onClick={() => deleteBookmark(b.id)}
-                            className="text-red-500"
+                <div className="space-y-3">
+                    <h2 className="text-sm font-medium text-gray-500 uppercase tracking-wide">
+                        Saved — {bookmarks.length}
+                    </h2>
+
+                    {bookmarks.length === 0 && (
+                        <p className="text-sm text-gray-400 text-center py-10">
+                            No bookmarks yet.
+                        </p>
+                    )}
+
+                    {bookmarks.map((b) => (
+                        <div
+                            key={b.id}
+                            className="bg-white border rounded-xl px-4 py-3 flex justify-between items-center shadow-sm hover:shadow-md transition"
                         >
-                            Delete
-                        </button>
-                    </div>
-                ))}
+                            <div className="overflow-hidden">
+                                <p className="text-sm font-medium text-gray-800 truncate">
+                                    {b.title}
+                                </p>
+                                <a
+                                    href={b.url}
+                                    target="_blank"
+                                    className="text-xs text-blue-500 hover:underline truncate block"
+                                >
+                                    {b.url}
+                                </a>
+                            </div>
+                            <button
+                                onClick={() => deleteBookmark(b.id)}
+                                className="ml-4 text-gray-300 hover:text-red-500 transition text-lg"
+                            >
+                                ×
+                            </button>
+                        </div>
+                    ))}
+                </div>
             </div>
         </div>
     );
